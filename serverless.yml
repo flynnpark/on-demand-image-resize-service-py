@@ -1,0 +1,65 @@
+service: on-demand-image-resize-service
+
+frameworkVersion: '2'
+
+custom:
+  s3BucketName:
+    staging: s3_staging_bucket_name
+    production: s3_production_bucket_name
+  pythonRequirements:
+    useStaticCache: false
+    dockerizePip: true
+    dockerImage: lambci/lambda:build-python3.8
+
+plugins:
+  - serverless-python-requirements
+
+package:
+  excludeDevDependencies: true
+  patterns:
+    - '!node_modules/**'
+    - '!.venv/**'
+    - '!.gitignore'
+    - '!.README.md'
+    - '!.serverless.yml'
+
+provider:
+  name: aws
+  runtime: python3.8
+  region: us-east-1
+  lambdaHashingVersion: 20201221
+  stage: ${opt:stage, 'staging'}
+  stackName: on-demand-image-resize-service-${self:provider.stage}
+  deploymentBucket:
+    name: on-demand-image-resize-service
+    maxPreviousDeploymentArtifacts: 5
+  cloudFront:
+    cachePolicies:
+      resizedImageCachePolicy:
+        DefaultTTL: 60
+        MinTTL: 30
+        MaxTTL: 3600
+        ParametersInCacheKeyAndForwardedToOrigin:
+          QueryStringsConfig:
+            QueryStringBehavior: whitelist
+            QueryStrings:
+              - w
+              - h
+
+functions:
+  resize-function:
+    role: ${env:AWS_LAMBDA_ROLE}
+    handler: main.handler
+    timeout: 30
+    memorySize: 1024
+    events:
+      - cloudFront:
+          eventType: origin-response
+          origin: s3://${self:custom.s3BucketName.${self:provider.stage}}.s3.amazonaws.com/
+          cachePolicy:
+            name: resizedImageCachePolicy
+          behavior:
+            ViewerProtocolPolicy: allow-all
+            AllowedMethods:
+              - 'GET'
+              - 'HEAD'
